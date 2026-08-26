@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import initSqlJs from 'sql.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -6,21 +6,108 @@ import fs from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Detect serverless environment (e.g. Vercel)
-const isServerless = process.env.VERCEL === '1' || process.env.NOW_REGION || process.env.AWS_LAMBDA_FUNCTION_NAME;
+// Detect serverless environment (e.g. Vercel, AWS Lambda)
+const isServerless = !!(process.env.VERCEL === '1' || process.env.NOW_REGION || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
-// Database directory: /tmp in serverless, or server/data in local/persistent environments
+// Database storage directory
 const dbDir = isServerless ? '/tmp' : path.join(__dirname, '..', 'data');
 if (!fs.existsSync(dbDir)) {
   try {
     fs.mkdirSync(dbDir, { recursive: true });
   } catch (e) {
-    // Ignore error if directory already exists
+    // Ignore directory exists error
   }
 }
 
 const dbPath = path.join(dbDir, 'rental_marketplace.db');
-const db = new DatabaseSync(dbPath);
+
+// Initialize WebAssembly SQLite engine
+const SQL = await initSqlJs();
+
+let rawDb;
+if (fs.existsSync(dbPath)) {
+  try {
+    const fileBuffer = fs.readFileSync(dbPath);
+    rawDb = new SQL.Database(fileBuffer);
+  } catch (err) {
+    console.warn('Could not read existing database file, creating fresh database in memory:', err.message);
+    rawDb = new SQL.Database();
+  }
+} else {
+  rawDb = new SQL.Database();
+}
+
+// Helper to save SQLite state to disk when modified
+function saveDatabaseToDisk() {
+  try {
+    const data = rawDb.export();
+    fs.writeFileSync(dbPath, Buffer.from(data));
+  } catch (e) {
+    // Ignore write errors in strict read-only environments
+  }
+}
+
+// Unified Database wrapper matching standard prepared statements interface
+const db = {
+  exec(sql) {
+    rawDb.run(sql);
+    saveDatabaseToDisk();
+  },
+  prepare(sql) {
+    return {
+      all(...params) {
+        // Flatten array if passed as single array
+        const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+        const stmt = rawDb.prepare(sql);
+        if (flatParams.length > 0) {
+          stmt.bind(flatParams);
+        }
+        const rows = [];
+        while (stmt.step()) {
+          rows.push(stmt.getAsObject());
+        }
+        stmt.free();
+        return rows;
+      },
+      get(...params) {
+        const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+        const stmt = rawDb.prepare(sql);
+        if (flatParams.length > 0) {
+          stmt.bind(flatParams);
+        }
+        let row = null;
+        if (stmt.step()) {
+          row = stmt.getAsObject();
+        }
+        stmt.free();
+        return row;
+      },
+      run(...params) {
+        const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+        rawDb.run(sql, flatParams);
+        
+        let lastInsertRowid = 0;
+        try {
+          const lastIdRes = rawDb.exec('SELECT last_insert_rowid() as id');
+          lastInsertRowid = lastIdRes[0]?.values[0]?.[0] || 0;
+        } catch (e) {
+          // Fallback
+        }
+
+        let changes = 0;
+        try {
+          const changesRes = rawDb.exec('SELECT changes() as count');
+          changes = changesRes[0]?.values[0]?.[0] || 0;
+        } catch (e) {
+          // Fallback
+        }
+
+        saveDatabaseToDisk();
+        return { lastInsertRowid, changes };
+      }
+    };
+  }
+};
 
 // Enable foreign keys
 db.exec('PRAGMA foreign_keys = ON;');
@@ -133,17 +220,6 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_inquiries_owner ON rental_inquiries(owner_id);
     CREATE INDEX IF NOT EXISTS idx_inquiries_renter ON rental_inquiries(renter_id);
   `);
-
-  // Migrate role column if not present in existing table
-  try {
-    const tableInfo = db.prepare('PRAGMA table_info(users)').all();
-    const hasRole = tableInfo.some(col => col.name === 'role');
-    if (!hasRole) {
-      db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user' CHECK(role IN ('user', 'admin'));");
-    }
-  } catch (e) {
-    // Column already exists
-  }
 }
 
 export default db;
