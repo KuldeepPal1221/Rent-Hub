@@ -8,6 +8,7 @@
     "server": "node server/index.js",
     "client": "vite",
     "seed": "node server/seed/seedData.js",
+    "create-admin": "node server/seed/createAdmin.js",
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server/index.js"

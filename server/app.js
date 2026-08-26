@@ -15,6 +15,7 @@ import userRoutes from './routes/users.js';
 import uploadRoutes from './routes/upload.js';
 import adminRoutes from './routes/admin.js';
 import { seedDatabase } from './seed/seedData.js';
+import { ensureAdminUser } from './seed/createAdmin.js';
 
 dotenv.config();
 
@@ -43,15 +44,17 @@ app.use('/uploads', express.static(uploadDir));
 // Initialize Postgres schema (now async — must await)
 await initDatabase();
 
-// Auto-seed if database is empty (now async — must await)
+// Auto-seed if database is empty, or ensure default Master Admin exists
 try {
   const userCount = (await db.prepare('SELECT COUNT(*) as count FROM users').get())?.count || 0;
   if (userCount === 0) {
     console.log('Database empty, automatically seeding initial data...');
     await seedDatabase();
+  } else {
+    await ensureAdminUser();
   }
 } catch (e) {
-  console.error('Auto-seed check error:', e);
+  console.error('Auto-seed / Admin check error:', e);
 }
 
 // API Routes
