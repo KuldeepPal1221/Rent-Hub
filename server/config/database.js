@@ -6,10 +6,17 @@ import fs from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Database file path in server/data directory
-const dbDir = path.join(__dirname, '..', 'data');
+// Detect serverless environment (e.g. Vercel)
+const isServerless = process.env.VERCEL === '1' || process.env.NOW_REGION || process.env.AWS_LAMBDA_FUNCTION_NAME;
+
+// Database directory: /tmp in serverless, or server/data in local/persistent environments
+const dbDir = isServerless ? '/tmp' : path.join(__dirname, '..', 'data');
 if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+  try {
+    fs.mkdirSync(dbDir, { recursive: true });
+  } catch (e) {
+    // Ignore error if directory already exists
+  }
 }
 
 const dbPath = path.join(dbDir, 'rental_marketplace.db');
