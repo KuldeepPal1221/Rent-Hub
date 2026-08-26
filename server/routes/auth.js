@@ -42,7 +42,7 @@ router.post('/register', async (req, res) => {
     }
 
     // Check if email already exists
-    const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(cleanEmail);
+    const existingUser = await db.prepare('SELECT id FROM users WHERE email = ?').get(cleanEmail);
     if (existingUser) {
       return res.status(409).json({
         success: false,
@@ -63,7 +63,7 @@ router.post('/register', async (req, res) => {
       ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, 1, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `);
 
-    const result = insertStmt.run(
+    const result = await insertStmt.run(
       full_name.trim(),
       cleanEmail,
       cleanPhone,
@@ -75,7 +75,7 @@ router.post('/register', async (req, res) => {
     const userId = result.lastInsertRowid;
 
     // Fetch created user without password_hash
-    const newUser = db.prepare(`
+    const newUser = await db.prepare(`
       SELECT id, full_name, email, phone, profile_image, city, 
              whatsapp_number, email_contact_enabled, phone_contact_enabled, 
              whatsapp_contact_enabled, account_status, created_at
@@ -114,7 +114,7 @@ router.post('/login', async (req, res) => {
     const identifier = email.trim().toLowerCase();
 
     // Look up user by email or phone
-    const user = db.prepare(`
+    const user = await db.prepare(`
       SELECT * FROM users WHERE LOWER(email) = ? OR phone = ?
     `).get(identifier, email.trim());
 
@@ -142,7 +142,7 @@ router.post('/login', async (req, res) => {
     }
 
     // Update last_login
-    db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
+    await db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
 
     // Sanitize user object (exclude password_hash)
     const { password_hash, ...safeUser } = user;
@@ -164,7 +164,7 @@ router.post('/login', async (req, res) => {
 });
 
 // 3. GET CURRENT USER
-router.get('/me', authenticateToken, (req, res) => {
+router.get('/me', authenticateToken, async (req, res) => {
   return res.json({
     success: true,
     user: req.user
@@ -172,7 +172,7 @@ router.get('/me', authenticateToken, (req, res) => {
 });
 
 // 4. UPDATE PROFILE
-router.put('/profile', authenticateToken, (req, res) => {
+router.put('/profile', authenticateToken, async (req, res) => {
   try {
     const { full_name, phone, city, whatsapp_number, profile_image } = req.body;
 
@@ -183,7 +183,7 @@ router.put('/profile', authenticateToken, (req, res) => {
       });
     }
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE users 
       SET full_name = ?, phone = ?, city = ?, 
           whatsapp_number = ?, profile_image = ?, updated_at = CURRENT_TIMESTAMP
@@ -197,7 +197,7 @@ router.put('/profile', authenticateToken, (req, res) => {
       req.user.id
     );
 
-    const updatedUser = db.prepare(`
+    const updatedUser = await db.prepare(`
       SELECT id, full_name, email, phone, profile_image, city, 
              whatsapp_number, email_contact_enabled, phone_contact_enabled, 
              whatsapp_contact_enabled, account_status, created_at
@@ -219,11 +219,11 @@ router.put('/profile', authenticateToken, (req, res) => {
 });
 
 // 5. UPDATE PRIVACY SETTINGS
-router.put('/privacy', authenticateToken, (req, res) => {
+router.put('/privacy', authenticateToken, async (req, res) => {
   try {
     const { email_contact_enabled, phone_contact_enabled, whatsapp_contact_enabled } = req.body;
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE users 
       SET email_contact_enabled = ?, 
           phone_contact_enabled = ?, 
@@ -237,7 +237,7 @@ router.put('/privacy', authenticateToken, (req, res) => {
       req.user.id
     );
 
-    const updatedUser = db.prepare(`
+    const updatedUser = await db.prepare(`
       SELECT id, full_name, email, phone, profile_image, city, 
              whatsapp_number, email_contact_enabled, phone_contact_enabled, 
              whatsapp_contact_enabled, account_status, created_at
@@ -278,7 +278,7 @@ router.put('/change-password', authenticateToken, async (req, res) => {
     }
 
     // Get current hash
-    const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+    const user = await db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
     const isMatch = await bcrypt.compare(current_password, user.password_hash);
 
     if (!isMatch) {
@@ -289,7 +289,7 @@ router.put('/change-password', authenticateToken, async (req, res) => {
     }
 
     const newHash = await bcrypt.hash(new_password, 10);
-    db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+    await db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
       newHash,
       req.user.id
     );
@@ -308,13 +308,13 @@ router.put('/change-password', authenticateToken, async (req, res) => {
 });
 
 // 7. FORGOT PASSWORD (SIMULATED FOR PRODUCTION READINESS)
-router.post('/forgot-password', (req, res) => {
+router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
   if (!email) {
     return res.status(400).json({ success: false, message: 'Please provide your registered email.' });
   }
 
-  const user = db.prepare('SELECT id FROM users WHERE LOWER(email) = ?').get(email.trim().toLowerCase());
+  const user = await db.prepare('SELECT id FROM users WHERE LOWER(email) = ?').get(email.trim().toLowerCase());
   // For security, do not disclose whether user exists or not
   return res.json({
     success: true,

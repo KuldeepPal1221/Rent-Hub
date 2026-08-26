@@ -5,7 +5,7 @@ import { authenticateToken } from '../middleware/auth.js';
 const router = express.Router();
 
 // 1. CREATE RENTAL INQUIRY
-router.post('/', authenticateToken, (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   try {
     const {
       product_id,
@@ -25,7 +25,7 @@ router.post('/', authenticateToken, (req, res) => {
     }
 
     const productId = Number(product_id);
-    const product = db.prepare('SELECT id, owner_id, name, availability_status FROM products WHERE id = ?').get(productId);
+    const product = await db.prepare('SELECT id, owner_id, name, availability_status FROM products WHERE id = ?').get(productId);
 
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found.' });
@@ -46,10 +46,10 @@ router.post('/', authenticateToken, (req, res) => {
       INSERT INTO rental_inquiries (
         product_id, owner_id, renter_id, renter_name, renter_email, renter_phone,
         rental_start_date, rental_end_date, message, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())
     `);
 
-    const result = insertStmt.run(
+    const result = await insertStmt.run(
       productId,
       product.owner_id,
       req.user.id,
@@ -76,9 +76,9 @@ router.post('/', authenticateToken, (req, res) => {
 });
 
 // 2. GET RECEIVED INQUIRIES (Owner view)
-router.get('/received', authenticateToken, (req, res) => {
+router.get('/received', authenticateToken, async (req, res) => {
   try {
-    const inquiries = db.prepare(`
+    const inquiries = await db.prepare(`
       SELECT 
         ri.*,
         p.name as product_name,
@@ -108,9 +108,9 @@ router.get('/received', authenticateToken, (req, res) => {
 });
 
 // 3. GET SENT INQUIRIES (Renter view)
-router.get('/sent', authenticateToken, (req, res) => {
+router.get('/sent', authenticateToken, async (req, res) => {
   try {
-    const inquiries = db.prepare(`
+    const inquiries = await db.prepare(`
       SELECT 
         ri.*,
         p.name as product_name,
@@ -154,7 +154,7 @@ router.get('/sent', authenticateToken, (req, res) => {
 });
 
 // 4. UPDATE INQUIRY STATUS (Owner: accept, reject, complete / Renter: cancel)
-router.patch('/:id/status', authenticateToken, (req, res) => {
+router.patch('/:id/status', authenticateToken, async (req, res) => {
   try {
     const inquiryId = Number(req.params.id);
     const { status } = req.body;
@@ -164,7 +164,7 @@ router.patch('/:id/status', authenticateToken, (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid status value.' });
     }
 
-    const inquiry = db.prepare('SELECT * FROM rental_inquiries WHERE id = ?').get(inquiryId);
+    const inquiry = await db.prepare('SELECT * FROM rental_inquiries WHERE id = ?').get(inquiryId);
     if (!inquiry) {
       return res.status(404).json({ success: false, message: 'Rental inquiry not found.' });
     }
@@ -181,9 +181,9 @@ router.patch('/:id/status', authenticateToken, (req, res) => {
       });
     }
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE rental_inquiries 
-      SET status = ?, updated_at = datetime('now') 
+      SET status = ?, updated_at = NOW() 
       WHERE id = ?
     `).run(status, inquiryId);
 

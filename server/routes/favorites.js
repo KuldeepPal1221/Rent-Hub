@@ -5,11 +5,11 @@ import { authenticateToken } from '../middleware/auth.js';
 const router = express.Router();
 
 // Helper to attach images
-function attachImagesToProducts(products) {
+async function attachImagesToProducts(products) {
   if (!products || products.length === 0) return [];
   const productIds = products.map(p => p.id);
   const placeholders = productIds.map(() => '?').join(',');
-  const images = db.prepare(`
+  const images = await db.prepare(`
     SELECT * FROM product_images 
     WHERE product_id IN (${placeholders}) 
     ORDER BY display_order ASC, id ASC
@@ -32,9 +32,9 @@ function attachImagesToProducts(products) {
 }
 
 // 1. GET USER'S FAVORITES
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
-    const rawProducts = db.prepare(`
+    const rawProducts = await db.prepare(`
       SELECT 
         p.*,
         c.name as category_name,
@@ -50,7 +50,7 @@ router.get('/', authenticateToken, (req, res) => {
       ORDER BY f.created_at DESC
     `).all(req.user.id);
 
-    const favorites = attachImagesToProducts(rawProducts);
+    const favorites = await attachImagesToProducts(rawProducts);
 
     return res.json({
       success: true,
@@ -66,30 +66,31 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 // 2. TOGGLE FAVORITE (ADD / REMOVE)
-router.post('/:productId', authenticateToken, (req, res) => {
+router.post('/:productId', authenticateToken, async (req, res) => {
   try {
     const productId = Number(req.params.productId);
     const userId = req.user.id;
 
     // Check if product exists
-    const product = db.prepare('SELECT id, name FROM products WHERE id = ?').get(productId);
+    const product = await db.prepare('SELECT id, name FROM products WHERE id = ?').get(productId);
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found.' });
     }
 
     // Check if already favorited
-    const existing = db.prepare('SELECT id FROM favorites WHERE user_id = ? AND product_id = ?').get(userId, productId);
+    const existing = await db.prepare('SELECT id FROM favorites WHERE user_id = ? AND product_id = ?').get(userId, productId);
 
     let isFavorite = false;
     if (existing) {
-      db.prepare('DELETE FROM favorites WHERE id = ?').run(existing.id);
+      await db.prepare('DELETE FROM favorites WHERE id = ?').run(existing.id);
       isFavorite = false;
     } else {
-      db.prepare('INSERT INTO favorites (user_id, product_id, created_at) VALUES (?, ?, datetime(\'now\'))').run(userId, productId);
+      await db.prepare('INSERT INTO favorites (user_id, product_id, created_at) VALUES (?, ?, NOW())').run(userId, productId);
       isFavorite = true;
     }
 
-    const totalFavs = db.prepare('SELECT COUNT(*) as count FROM favorites WHERE product_id = ?').get(productId).count;
+    const totalFavsRow = await db.prepare('SELECT COUNT(*) as count FROM favorites WHERE product_id = ?').get(productId);
+    const totalFavs = totalFavsRow.count;
 
     return res.json({
       success: true,

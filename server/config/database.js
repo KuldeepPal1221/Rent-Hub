@@ -1,123 +1,68 @@
-import initSqlJs from 'sql.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import fs from 'fs';
+import postgres from 'postgres';
+import dotenv from 'dotenv';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+dotenv.config();
 
-// Detect serverless environment (e.g. Vercel, AWS Lambda)
-const isServerless = !!(process.env.VERCEL === '1' || process.env.NOW_REGION || process.env.AWS_LAMBDA_FUNCTION_NAME);
-
-// Database storage directory
-const dbDir = isServerless ? '/tmp' : path.join(__dirname, '..', 'data');
-if (!fs.existsSync(dbDir)) {
-  try {
-    fs.mkdirSync(dbDir, { recursive: true });
-  } catch (e) {
-    // Ignore directory exists error
-  }
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL environment variable is not set.');
 }
 
-const dbPath = path.join(dbDir, 'rental_marketplace.db');
+// Neon/Postgres connection (works locally and on Vercel serverless)
+const sql = postgres(process.env.DATABASE_URL, {
+  ssl: 'require',
+  max: 1 // safe default for serverless functions
+});
 
-// Initialize WebAssembly SQLite engine
-const SQL = await initSqlJs();
-
-let rawDb;
-if (fs.existsSync(dbPath)) {
-  try {
-    const fileBuffer = fs.readFileSync(dbPath);
-    rawDb = new SQL.Database(fileBuffer);
-  } catch (err) {
-    console.warn('Could not read existing database file, creating fresh database in memory:', err.message);
-    rawDb = new SQL.Database();
-  }
-} else {
-  rawDb = new SQL.Database();
+// Converts SQLite-style "?" placeholders into Postgres-style "$1, $2, ..."
+function toPgQuery(text) {
+  let i = 0;
+  return text.replace(/\?/g, () => `$${++i}`);
 }
 
-// Helper to save SQLite state to disk when modified
-function saveDatabaseToDisk() {
-  try {
-    const data = rawDb.export();
-    fs.writeFileSync(dbPath, Buffer.from(data));
-  } catch (e) {
-    // Ignore write errors in strict read-only environments
-  }
-}
-
-// Unified Database wrapper matching standard prepared statements interface
+// Unified wrapper matching the same prepare().get()/.all()/.run() shape
+// the app already uses. NOTE: these are now ASYNC — callers must use await.
 const db = {
-  exec(sql) {
-    rawDb.run(sql);
-    saveDatabaseToDisk();
+  async exec(text) {
+    await sql.unsafe(text);
   },
-  prepare(sql) {
+  prepare(text) {
+    const pgText = toPgQuery(text);
     return {
-      all(...params) {
-        // Flatten array if passed as single array
+      async all(...params) {
         const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
-        const stmt = rawDb.prepare(sql);
-        if (flatParams.length > 0) {
-          stmt.bind(flatParams);
-        }
-        const rows = [];
-        while (stmt.step()) {
-          rows.push(stmt.getAsObject());
-        }
-        stmt.free();
-        return rows;
+        return await sql.unsafe(pgText, flatParams);
       },
-      get(...params) {
+      async get(...params) {
         const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
-        const stmt = rawDb.prepare(sql);
-        if (flatParams.length > 0) {
-          stmt.bind(flatParams);
-        }
-        let row = null;
-        if (stmt.step()) {
-          row = stmt.getAsObject();
-        }
-        stmt.free();
-        return row;
+        const rows = await sql.unsafe(pgText, flatParams);
+        return rows[0] || null;
       },
-      run(...params) {
+      async run(...params) {
         const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
-        rawDb.run(sql, flatParams);
-        
-        let lastInsertRowid = 0;
-        try {
-          const lastIdRes = rawDb.exec('SELECT last_insert_rowid() as id');
-          lastInsertRowid = lastIdRes[0]?.values[0]?.[0] || 0;
-        } catch (e) {
-          // Fallback
+
+        // Auto-append RETURNING id on INSERTs so we can report lastInsertRowid
+        let queryText = pgText;
+        const isInsert = /^\s*insert/i.test(queryText);
+        if (isInsert && !/returning/i.test(queryText)) {
+          queryText += ' RETURNING id';
         }
 
-        let changes = 0;
-        try {
-          const changesRes = rawDb.exec('SELECT changes() as count');
-          changes = changesRes[0]?.values[0]?.[0] || 0;
-        } catch (e) {
-          // Fallback
-        }
-
-        saveDatabaseToDisk();
-        return { lastInsertRowid, changes };
+        const rows = await sql.unsafe(queryText, flatParams);
+        return {
+          lastInsertRowid: isInsert && rows[0] ? rows[0].id : 0,
+          changes: rows.count ?? rows.length ?? 0
+        };
       }
     };
   }
 };
 
-// Enable foreign keys
-db.exec('PRAGMA foreign_keys = ON;');
-
-// Initialize database schema tables
-export function initDatabase() {
-  db.exec(`
+// Initialize database schema tables (Postgres syntax)
+export async function initDatabase() {
+  await db.exec(`
     -- Users Table
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       full_name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
       phone TEXT NOT NULL,
@@ -130,26 +75,26 @@ export function initDatabase() {
       whatsapp_contact_enabled INTEGER DEFAULT 1,
       role TEXT DEFAULT 'user' CHECK(role IN ('user', 'admin')),
       account_status TEXT DEFAULT 'active' CHECK(account_status IN ('active', 'suspended', 'inactive')),
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
-      last_login TEXT
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW(),
+      last_login TIMESTAMP
     );
 
     -- Categories Table
     CREATE TABLE IF NOT EXISTS categories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       slug TEXT NOT NULL UNIQUE,
       description TEXT,
       icon TEXT,
       image TEXT,
       display_order INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TIMESTAMP DEFAULT NOW()
     );
 
     -- Products Table
     CREATE TABLE IF NOT EXISTS products (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       owner_id INTEGER NOT NULL,
       category_id INTEGER NOT NULL,
       name TEXT NOT NULL,
@@ -164,28 +109,28 @@ export function initDatabase() {
       available_until TEXT,
       availability_status TEXT DEFAULT 'available' CHECK(availability_status IN ('available', 'rented', 'inactive')),
       views_count INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW(),
       FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE RESTRICT
     );
 
     -- Product Images Table
     CREATE TABLE IF NOT EXISTS product_images (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       product_id INTEGER NOT NULL,
       image_url TEXT NOT NULL,
       display_order INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now')),
+      created_at TIMESTAMP DEFAULT NOW(),
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     );
 
     -- Favorites Table
     CREATE TABLE IF NOT EXISTS favorites (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL,
       product_id INTEGER NOT NULL,
-      created_at TEXT DEFAULT (datetime('now')),
+      created_at TIMESTAMP DEFAULT NOW(),
       UNIQUE(user_id, product_id),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
@@ -193,7 +138,7 @@ export function initDatabase() {
 
     -- Rental Inquiries Table
     CREATE TABLE IF NOT EXISTS rental_inquiries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       product_id INTEGER NOT NULL,
       owner_id INTEGER NOT NULL,
       renter_id INTEGER NOT NULL,
@@ -204,8 +149,8 @@ export function initDatabase() {
       rental_end_date TEXT NOT NULL,
       message TEXT,
       status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'rejected', 'completed', 'cancelled')),
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW(),
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
       FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (renter_id) REFERENCES users(id) ON DELETE CASCADE

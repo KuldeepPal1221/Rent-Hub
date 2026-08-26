@@ -5,11 +5,11 @@ import { authenticateToken } from '../middleware/auth.js';
 const router = express.Router();
 
 // Helper to attach images
-function attachImagesToProducts(products) {
+async function attachImagesToProducts(products) {
   if (!products || products.length === 0) return [];
   const productIds = products.map(p => p.id);
   const placeholders = productIds.map(() => '?').join(',');
-  const images = db.prepare(`
+  const images = await db.prepare(`
     SELECT * FROM product_images 
     WHERE product_id IN (${placeholders}) 
     ORDER BY display_order ASC, id ASC
@@ -31,11 +31,11 @@ function attachImagesToProducts(products) {
 }
 
 // 1. PUBLIC OWNER PROFILE & PRODUCTS
-router.get('/:id/public', (req, res) => {
+router.get('/:id/public', async (req, res) => {
   try {
     const userId = Number(req.params.id);
 
-    const user = db.prepare(`
+    const user = await db.prepare(`
       SELECT 
         id, full_name, profile_image, city, created_at,
         phone, whatsapp_number, email,
@@ -53,7 +53,7 @@ router.get('/:id/public', (req, res) => {
     }
 
     // Owner's active products
-    const rawProducts = db.prepare(`
+    const rawProducts = await db.prepare(`
       SELECT 
         p.*,
         c.name as category_name,
@@ -64,7 +64,7 @@ router.get('/:id/public', (req, res) => {
       ORDER BY p.created_at DESC
     `).all(userId);
 
-    const products = attachImagesToProducts(rawProducts);
+    const products = await attachImagesToProducts(rawProducts);
 
     // Filter contact info based on privacy settings
     const ownerProfile = {
@@ -97,16 +97,16 @@ router.get('/:id/public', (req, res) => {
 });
 
 // 2. DASHBOARD STATS FOR AUTHENTICATED USER
-router.get('/stats/dashboard', authenticateToken, (req, res) => {
+router.get('/stats/dashboard', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const totalListings = db.prepare('SELECT COUNT(*) as count FROM products WHERE owner_id = ?').get(userId).count;
-    const activeListings = db.prepare('SELECT COUNT(*) as count FROM products WHERE owner_id = ? AND availability_status = "available"').get(userId).count;
-    const inquiriesReceived = db.prepare('SELECT COUNT(*) as count FROM rental_inquiries WHERE owner_id = ?').get(userId).count;
-    const pendingInquiries = db.prepare('SELECT COUNT(*) as count FROM rental_inquiries WHERE owner_id = ? AND status = "pending"').get(userId).count;
-    const inquiriesSent = db.prepare('SELECT COUNT(*) as count FROM rental_inquiries WHERE renter_id = ?').get(userId).count;
-    const totalFavorites = db.prepare('SELECT COUNT(*) as count FROM favorites WHERE user_id = ?').get(userId).count;
+    const totalListings = (await db.prepare('SELECT COUNT(*) as count FROM products WHERE owner_id = ?').get(userId)).count;
+    const activeListings = (await db.prepare(`SELECT COUNT(*) as count FROM products WHERE owner_id = ? AND availability_status = 'available'`).get(userId)).count;
+    const inquiriesReceived = (await db.prepare('SELECT COUNT(*) as count FROM rental_inquiries WHERE owner_id = ?').get(userId)).count;
+    const pendingInquiries = (await db.prepare(`SELECT COUNT(*) as count FROM rental_inquiries WHERE owner_id = ? AND status = 'pending'`).get(userId)).count;
+    const inquiriesSent = (await db.prepare('SELECT COUNT(*) as count FROM rental_inquiries WHERE renter_id = ?').get(userId)).count;
+    const totalFavorites = (await db.prepare('SELECT COUNT(*) as count FROM favorites WHERE user_id = ?').get(userId)).count;
 
     return res.json({
       success: true,

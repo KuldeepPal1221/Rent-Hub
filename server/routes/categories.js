@@ -4,9 +4,9 @@ import db from '../config/database.js';
 const router = express.Router();
 
 // GET all categories with product counts
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const categories = db.prepare(`
+    const categories = await db.prepare(`
       SELECT 
         c.*, 
         COUNT(CASE WHEN p.availability_status = 'available' THEN p.id END) as product_count
@@ -30,15 +30,15 @@ router.get('/', (req, res) => {
 });
 
 // GET single category by slug or ID
-router.get('/:identifier', (req, res) => {
+router.get('/:identifier', async (req, res) => {
   try {
     const { identifier } = req.params;
     let category;
 
     if (!isNaN(identifier)) {
-      category = db.prepare('SELECT * FROM categories WHERE id = ?').get(Number(identifier));
+      category = await db.prepare('SELECT * FROM categories WHERE id = ?').get(Number(identifier));
     } else {
-      category = db.prepare('SELECT * FROM categories WHERE slug = ?').get(identifier);
+      category = await db.prepare('SELECT * FROM categories WHERE slug = ?').get(identifier);
     }
 
     if (!category) {

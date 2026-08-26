@@ -3,7 +3,7 @@ import db from '../config/database.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'renthub_super_secure_jwt_secret_key_2026_rental_app';
 
-export function authenticateToken(req, res, next) {
+export async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
@@ -16,9 +16,9 @@ export function authenticateToken(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    
+
     // Fetch fresh user data (excluding password_hash)
-    const user = db.prepare(`
+    const user = await db.prepare(`
       SELECT id, full_name, email, phone, profile_image, city, 
              whatsapp_number, email_contact_enabled, phone_contact_enabled, 
              whatsapp_contact_enabled, role, account_status, created_at
@@ -62,7 +62,7 @@ export function requireAdmin(req, res, next) {
 }
 
 // Optional authentication - populates req.user if token is present, but doesn't block if not
-export function optionalAuth(req, res, next) {
+export async function optionalAuth(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -73,7 +73,7 @@ export function optionalAuth(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    const user = db.prepare(`
+    const user = await db.prepare(`
       SELECT id, full_name, email, phone, profile_image, city, 
              whatsapp_number, email_contact_enabled, phone_contact_enabled, 
              whatsapp_contact_enabled, role, account_status, created_at

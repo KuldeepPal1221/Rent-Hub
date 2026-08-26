@@ -8,13 +8,13 @@ const router = express.Router();
 router.use(authenticateToken, requireAdmin);
 
 // 1. ADMIN DASHBOARD METRICS
-router.get('/stats', (req, res) => {
+router.get('/stats', async (req, res) => {
   try {
-    const totalUsers = db.prepare('SELECT COUNT(*) as count FROM users').get()?.count || 0;
-    const totalProducts = db.prepare('SELECT COUNT(*) as count FROM products').get()?.count || 0;
-    const activeProducts = db.prepare("SELECT COUNT(*) as count FROM products WHERE availability_status = 'available'").get()?.count || 0;
-    const totalInquiries = db.prepare('SELECT COUNT(*) as count FROM rental_inquiries').get()?.count || 0;
-    const totalFavorites = db.prepare('SELECT COUNT(*) as count FROM favorites').get()?.count || 0;
+    const totalUsers = (await db.prepare('SELECT COUNT(*) as count FROM users').get())?.count || 0;
+    const totalProducts = (await db.prepare('SELECT COUNT(*) as count FROM products').get())?.count || 0;
+    const activeProducts = (await db.prepare("SELECT COUNT(*) as count FROM products WHERE availability_status = 'available'").get())?.count || 0;
+    const totalInquiries = (await db.prepare('SELECT COUNT(*) as count FROM rental_inquiries').get())?.count || 0;
+    const totalFavorites = (await db.prepare('SELECT COUNT(*) as count FROM favorites').get())?.count || 0;
 
     return res.json({
       success: true,
@@ -33,9 +33,9 @@ router.get('/stats', (req, res) => {
 });
 
 // 2. LIST ALL REGISTERED USERS
-router.get('/users', (req, res) => {
+router.get('/users', async (req, res) => {
   try {
-    const users = db.prepare(`
+    const users = await db.prepare(`
       SELECT 
         u.id, u.full_name, u.email, u.phone, u.city, u.profile_image, 
         u.role, u.account_status, u.created_at, u.last_login,
@@ -57,7 +57,7 @@ router.get('/users', (req, res) => {
 });
 
 // 3. TOGGLE OR UPDATE USER ACCOUNT STATUS (Active / Suspended)
-router.patch('/users/:id/status', (req, res) => {
+router.patch('/users/:id/status', async (req, res) => {
   try {
     const userId = Number(req.params.id);
     const { status } = req.body;
@@ -66,7 +66,7 @@ router.patch('/users/:id/status', (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid status.' });
     }
 
-    db.prepare('UPDATE users SET account_status = ?, updated_at = datetime(\'now\') WHERE id = ?').run(status, userId);
+    await db.prepare('UPDATE users SET account_status = ?, updated_at = NOW() WHERE id = ?').run(status, userId);
 
     return res.json({
       success: true,
@@ -79,7 +79,7 @@ router.patch('/users/:id/status', (req, res) => {
 });
 
 // 4. TOGGLE USER ROLE (User / Admin)
-router.patch('/users/:id/role', (req, res) => {
+router.patch('/users/:id/role', async (req, res) => {
   try {
     const userId = Number(req.params.id);
     const { role } = req.body;
@@ -88,7 +88,7 @@ router.patch('/users/:id/role', (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid role.' });
     }
 
-    db.prepare('UPDATE users SET role = ?, updated_at = datetime(\'now\') WHERE id = ?').run(role, userId);
+    await db.prepare('UPDATE users SET role = ?, updated_at = NOW() WHERE id = ?').run(role, userId);
 
     return res.json({
       success: true,
@@ -101,7 +101,7 @@ router.patch('/users/:id/role', (req, res) => {
 });
 
 // 5. DELETE USER
-router.delete('/users/:id', (req, res) => {
+router.delete('/users/:id', async (req, res) => {
   try {
     const userId = Number(req.params.id);
 
@@ -109,7 +109,7 @@ router.delete('/users/:id', (req, res) => {
       return res.status(400).json({ success: false, message: 'You cannot delete your own admin account.' });
     }
 
-    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    await db.prepare('DELETE FROM users WHERE id = ?').run(userId);
 
     return res.json({
       success: true,
@@ -122,9 +122,9 @@ router.delete('/users/:id', (req, res) => {
 });
 
 // 6. LIST ALL PRODUCTS FOR MODERATION
-router.get('/products', (req, res) => {
+router.get('/products', async (req, res) => {
   try {
-    const products = db.prepare(`
+    const products = await db.prepare(`
       SELECT 
         p.*,
         c.name as category_name,
@@ -148,10 +148,10 @@ router.get('/products', (req, res) => {
 });
 
 // 7. DELETE PRODUCT
-router.delete('/products/:id', (req, res) => {
+router.delete('/products/:id', async (req, res) => {
   try {
     const productId = Number(req.params.id);
-    db.prepare('DELETE FROM products WHERE id = ?').run(productId);
+    await db.prepare('DELETE FROM products WHERE id = ?').run(productId);
 
     return res.json({
       success: true,
@@ -164,9 +164,9 @@ router.delete('/products/:id', (req, res) => {
 });
 
 // 8. LIST ALL INQUIRIES
-router.get('/inquiries', (req, res) => {
+router.get('/inquiries', async (req, res) => {
   try {
-    const inquiries = db.prepare(`
+    const inquiries = await db.prepare(`
       SELECT 
         ri.*,
         p.name as product_name,

@@ -5,10 +5,10 @@ export async function seedDatabase() {
   console.log('🌱 Starting database seeding for RentHub...');
 
   // Initialize Schema
-  initDatabase();
+  await initDatabase();
 
   // Clean existing data for clean seed
-  db.exec(`
+  await db.exec(`
     DELETE FROM rental_inquiries;
     DELETE FROM favorites;
     DELETE FROM product_images;
@@ -28,11 +28,11 @@ export async function seedDatabase() {
       full_name, email, phone, password_hash, profile_image, city, 
       whatsapp_number, email_contact_enabled, phone_contact_enabled, 
       whatsapp_contact_enabled, role, account_status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), NOW())
   `);
 
   // Master Admin Account
-  const adminUser = insertUser.run(
+  const adminUser = await insertUser.run(
     'RentHub Master Admin',
     'admin@renthub.com',
     '+1 800-555-0100',
@@ -45,7 +45,7 @@ export async function seedDatabase() {
   );
 
   // Demo User 1 (Seller)
-  const user1 = insertUser.run(
+  const user1 = await insertUser.run(
     'Alex Morgan',
     'alex@example.com',
     '+1 555-0192',
@@ -58,7 +58,7 @@ export async function seedDatabase() {
   );
 
   // Demo User 2 (Owner / Renter)
-  const user2 = insertUser.run(
+  const user2 = await insertUser.run(
     'Sarah Jenkins',
     'sarah@example.com',
     '+1 555-0144',
@@ -71,7 +71,7 @@ export async function seedDatabase() {
   );
 
   // Demo User 3 (Renter / Sports Gear)
-  const user3 = insertUser.run(
+  const user3 = await insertUser.run(
     'David Miller',
     'david@example.com',
     '+1 555-0188',
@@ -104,12 +104,12 @@ export async function seedDatabase() {
 
   const insertCategory = db.prepare(`
     INSERT INTO categories (name, slug, description, icon, image, display_order, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, ?, ?, NOW())
   `);
 
   const categoryMap = {};
   for (const cat of categories) {
-    const res = insertCategory.run(cat.name, cat.slug, cat.description, cat.icon, cat.image, cat.order);
+    const res = await insertCategory.run(cat.name, cat.slug, cat.description, cat.icon, cat.image, cat.order);
     categoryMap[cat.slug] = res.lastInsertRowid;
   }
 
@@ -317,19 +317,19 @@ export async function seedDatabase() {
       owner_id, category_id, name, description, rental_price, price_period,
       security_deposit, condition, city, location, available_from, available_until,
       availability_status, views_count, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), NULL, 'available', ?, datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NULL, 'available', ?, NOW(), NOW())
   `);
 
   const insertImg = db.prepare(`
     INSERT INTO product_images (product_id, image_url, display_order, created_at)
-    VALUES (?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, NOW())
   `);
 
   const productIds = [];
-  sampleProducts.forEach((p, index) => {
+  for (const p of sampleProducts) {
     const categoryId = categoryMap[p.category_slug] || 1;
     const views = Math.floor(Math.random() * 45) + 12;
-    const res = insertProduct.run(
+    const res = await insertProduct.run(
       p.owner_id,
       categoryId,
       p.name,
@@ -346,29 +346,29 @@ export async function seedDatabase() {
     const prodId = res.lastInsertRowid;
     productIds.push(prodId);
 
-    p.images.forEach((imgUrl, order) => {
-      insertImg.run(prodId, imgUrl, order);
-    });
-  });
+    for (let order = 0; order < p.images.length; order++) {
+      await insertImg.run(prodId, p.images[order], order);
+    }
+  }
 
   console.log(`🏷️ Seeded ${sampleProducts.length} rental products with high-res photos.`);
 
   // 4. SEED FAVORITES & INQUIRIES
-  const insertFav = db.prepare(`INSERT INTO favorites (user_id, product_id, created_at) VALUES (?, ?, datetime('now'))`);
-  insertFav.run(user1.lastInsertRowid, productIds[0]); // Alex favorited Sarah's Steam Iron
-  insertFav.run(user1.lastInsertRowid, productIds[4]); // Alex favorited David's Tent
-  insertFav.run(user2.lastInsertRowid, productIds[1]); // Sarah favorited Alex's Camera
-  insertFav.run(user3.lastInsertRowid, productIds[1]); // David favorited Alex's Camera
+  const insertFav = db.prepare(`INSERT INTO favorites (user_id, product_id, created_at) VALUES (?, ?, NOW())`);
+  await insertFav.run(user1.lastInsertRowid, productIds[0]); // Alex favorited Sarah's Steam Iron
+  await insertFav.run(user1.lastInsertRowid, productIds[4]); // Alex favorited David's Tent
+  await insertFav.run(user2.lastInsertRowid, productIds[1]); // Sarah favorited Alex's Camera
+  await insertFav.run(user3.lastInsertRowid, productIds[1]); // David favorited Alex's Camera
 
   const insertInq = db.prepare(`
     INSERT INTO rental_inquiries (
       product_id, owner_id, renter_id, renter_name, renter_email, renter_phone,
       rental_start_date, rental_end_date, message, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
   `);
 
   // Sarah inquires on Alex's Camera
-  insertInq.run(
+  await insertInq.run(
     productIds[1],
     user1.lastInsertRowid,
     user2.lastInsertRowid,
@@ -382,7 +382,7 @@ export async function seedDatabase() {
   );
 
   // David inquires on Sarah's Steam Iron
-  insertInq.run(
+  await insertInq.run(
     productIds[0],
     user2.lastInsertRowid,
     user3.lastInsertRowid,

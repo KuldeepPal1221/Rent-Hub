@@ -5,12 +5,12 @@ import { authenticateToken, optionalAuth } from '../middleware/auth.js';
 const router = express.Router();
 
 // Helper to attach images to products
-function attachImagesToProducts(products) {
+async function attachImagesToProducts(products) {
   if (!products || products.length === 0) return [];
 
   const productIds = products.map(p => p.id);
   const placeholders = productIds.map(() => '?').join(',');
-  const images = db.prepare(`
+  const images = await db.prepare(`
     SELECT * FROM product_images 
     WHERE product_id IN (${placeholders}) 
     ORDER BY display_order ASC, id ASC
@@ -32,7 +32,7 @@ function attachImagesToProducts(products) {
 }
 
 // 1. GET ALL PRODUCTS (WITH ADVANCED SEARCH & FILTERS)
-router.get('/', optionalAuth, (req, res) => {
+router.get('/', optionalAuth, async (req, res) => {
   try {
     const {
       search,
@@ -152,8 +152,8 @@ router.get('/', optionalAuth, (req, res) => {
     sql += ' LIMIT ? OFFSET ?';
     params.push(numLimit, offset);
 
-    const rawProducts = db.prepare(sql).all(...params);
-    const products = attachImagesToProducts(rawProducts);
+    const rawProducts = await db.prepare(sql).all(...params);
+    const products = await attachImagesToProducts(rawProducts);
 
     // Get total count for pagination
     let countSql = `
@@ -202,7 +202,8 @@ router.get('/', optionalAuth, (req, res) => {
       countParams.push(condition);
     }
 
-    const totalCount = db.prepare(countSql).get(...countParams)?.total || 0;
+    const totalCountRow = await db.prepare(countSql).get(...countParams);
+    const totalCount = totalCountRow?.total || 0;
 
     return res.json({
       success: true,
@@ -224,9 +225,9 @@ router.get('/', optionalAuth, (req, res) => {
 });
 
 // 2. GET CURRENT USER'S OWN LISTINGS
-router.get('/user/my-listings', authenticateToken, (req, res) => {
+router.get('/user/my-listings', authenticateToken, async (req, res) => {
   try {
-    const rawProducts = db.prepare(`
+    const rawProducts = await db.prepare(`
       SELECT 
         p.*,
         c.name as category_name,
@@ -239,7 +240,7 @@ router.get('/user/my-listings', authenticateToken, (req, res) => {
       ORDER BY p.created_at DESC
     `).all(req.user.id);
 
-    const products = attachImagesToProducts(rawProducts);
+    const products = await attachImagesToProducts(rawProducts);
 
     return res.json({
       success: true,
@@ -255,11 +256,11 @@ router.get('/user/my-listings', authenticateToken, (req, res) => {
 });
 
 // 3. GET SINGLE PRODUCT DETAILS (WITH OWNER PRIVACY & IMAGES)
-router.get('/:id', optionalAuth, (req, res) => {
+router.get('/:id', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const product = db.prepare(`
+    const product = await db.prepare(`
       SELECT 
         p.*,
         c.name as category_name,
@@ -289,20 +290,21 @@ router.get('/:id', optionalAuth, (req, res) => {
       });
     }
 
-    // Increment views count asynchronously
-    db.prepare('UPDATE products SET views_count = views_count + 1 WHERE id = ?').run(product.id);
+    // Increment views count
+    await db.prepare('UPDATE products SET views_count = views_count + 1 WHERE id = ?').run(product.id);
 
     // Fetch images
-    const images = db.prepare(`
+    const imageRows = await db.prepare(`
       SELECT image_url FROM product_images 
       WHERE product_id = ? 
       ORDER BY display_order ASC, id ASC
-    `).all(product.id).map(img => img.image_url);
+    `).all(product.id);
+    const images = imageRows.map(img => img.image_url);
 
     // Check favorite status for logged-in user
     let isFavorite = false;
     if (req.user) {
-      const fav = db.prepare('SELECT id FROM favorites WHERE user_id = ? AND product_id = ?').get(req.user.id, product.id);
+      const fav = await db.prepare('SELECT id FROM favorites WHERE user_id = ? AND product_id = ?').get(req.user.id, product.id);
       isFavorite = !!fav;
     }
 
@@ -349,7 +351,7 @@ router.get('/:id', optionalAuth, (req, res) => {
     };
 
     // Get related products from same category
-    const rawRelated = db.prepare(`
+    const rawRelated = await db.prepare(`
       SELECT p.*, c.name as category_name
       FROM products p
       JOIN categories c ON p.category_id = c.id
@@ -358,7 +360,7 @@ router.get('/:id', optionalAuth, (req, res) => {
       LIMIT 4
     `).all(product.category_id, product.id);
 
-    const relatedProducts = attachImagesToProducts(rawRelated);
+    const relatedProducts = await attachImagesToProducts(rawRelated);
 
     return res.json({
       success: true,
@@ -375,7 +377,7 @@ router.get('/:id', optionalAuth, (req, res) => {
 });
 
 // 4. CREATE NEW PRODUCT
-router.post('/', authenticateToken, (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   try {
     const {
       name,
@@ -430,10 +432,10 @@ router.post('/', authenticateToken, (req, res) => {
         owner_id, category_id, name, description, rental_price, price_period,
         security_deposit, condition, city, location, available_from, available_until,
         availability_status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
     `);
 
-    const result = insertProductStmt.run(
+    const result = await insertProductStmt.run(
       req.user.id,
       Number(category_id),
       name.trim(),
@@ -455,14 +457,15 @@ router.post('/', authenticateToken, (req, res) => {
     if (Array.isArray(images) && images.length > 0) {
       const insertImageStmt = db.prepare(`
         INSERT INTO product_images (product_id, image_url, display_order, created_at)
-        VALUES (?, ?, ?, datetime('now'))
+        VALUES (?, ?, ?, NOW())
       `);
 
-      images.forEach((url, idx) => {
+      for (let idx = 0; idx < images.length; idx++) {
+        const url = images[idx];
         if (url && typeof url === 'string' && url.trim() !== '') {
-          insertImageStmt.run(productId, url.trim(), idx);
+          await insertImageStmt.run(productId, url.trim(), idx);
         }
-      });
+      }
     }
 
     return res.status(201).json({
@@ -480,13 +483,13 @@ router.post('/', authenticateToken, (req, res) => {
 });
 
 // 5. UPDATE PRODUCT
-router.put('/:id', authenticateToken, (req, res) => {
+router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const productId = Number(id);
 
     // Verify ownership
-    const product = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
+    const product = await db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found.' });
     }
@@ -514,12 +517,12 @@ router.put('/:id', authenticateToken, (req, res) => {
       availability_status
     } = req.body;
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE products 
       SET name = ?, category_id = ?, description = ?, rental_price = ?, 
           price_period = ?, security_deposit = ?, condition = ?, city = ?, 
           location = ?, available_from = ?, available_until = ?, 
-          availability_status = ?, updated_at = datetime('now')
+          availability_status = ?, updated_at = NOW()
       WHERE id = ?
     `).run(
       name !== undefined ? name.trim() : product.name,
@@ -539,16 +542,17 @@ router.put('/:id', authenticateToken, (req, res) => {
 
     // If new images provided, update image list
     if (Array.isArray(images)) {
-      db.prepare('DELETE FROM product_images WHERE product_id = ?').run(productId);
+      await db.prepare('DELETE FROM product_images WHERE product_id = ?').run(productId);
       const insertImageStmt = db.prepare(`
         INSERT INTO product_images (product_id, image_url, display_order, created_at)
-        VALUES (?, ?, ?, datetime('now'))
+        VALUES (?, ?, ?, NOW())
       `);
-      images.forEach((url, idx) => {
+      for (let idx = 0; idx < images.length; idx++) {
+        const url = images[idx];
         if (url && typeof url === 'string' && url.trim() !== '') {
-          insertImageStmt.run(productId, url.trim(), idx);
+          await insertImageStmt.run(productId, url.trim(), idx);
         }
-      });
+      }
     }
 
     return res.json({
@@ -565,12 +569,12 @@ router.put('/:id', authenticateToken, (req, res) => {
 });
 
 // 6. TOGGLE PRODUCT STATUS (ACTIVE / INACTIVE)
-router.patch('/:id/toggle-status', authenticateToken, (req, res) => {
+router.patch('/:id/toggle-status', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const productId = Number(id);
 
-    const product = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
+    const product = await db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found.' });
     }
@@ -580,7 +584,7 @@ router.patch('/:id/toggle-status', authenticateToken, (req, res) => {
     }
 
     const newStatus = product.availability_status === 'available' ? 'inactive' : 'available';
-    db.prepare(`UPDATE products SET availability_status = ?, updated_at = datetime('now') WHERE id = ?`).run(
+    await db.prepare(`UPDATE products SET availability_status = ?, updated_at = NOW() WHERE id = ?`).run(
       newStatus,
       productId
     );
@@ -597,12 +601,12 @@ router.patch('/:id/toggle-status', authenticateToken, (req, res) => {
 });
 
 // 7. DELETE PRODUCT
-router.delete('/:id', authenticateToken, (req, res) => {
+router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const productId = Number(id);
 
-    const product = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
+    const product = await db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found.' });
     }
@@ -614,7 +618,7 @@ router.delete('/:id', authenticateToken, (req, res) => {
       });
     }
 
-    db.prepare('DELETE FROM products WHERE id = ?').run(productId);
+    await db.prepare('DELETE FROM products WHERE id = ?').run(productId);
 
     return res.json({
       success: true,

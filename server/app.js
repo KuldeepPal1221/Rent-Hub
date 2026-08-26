@@ -40,15 +40,15 @@ if (!fs.existsSync(uploadDir)) {
 }
 app.use('/uploads', express.static(uploadDir));
 
-// Initialize SQLite schema
-initDatabase();
+// Initialize Postgres schema (now async — must await)
+await initDatabase();
 
-// Auto-seed if database is empty
+// Auto-seed if database is empty (now async — must await)
 try {
-  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get()?.count || 0;
+  const userCount = (await db.prepare('SELECT COUNT(*) as count FROM users').get())?.count || 0;
   if (userCount === 0) {
     console.log('Database empty, automatically seeding initial data...');
-    seedDatabase();
+    await seedDatabase();
   }
 } catch (e) {
   console.error('Auto-seed check error:', e);
